@@ -1,0 +1,399 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Disbursement Heatmap</title>
+<link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@300;400;500&family=Syne:wght@700;800&display=swap" rel="stylesheet">
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: #f0f4f8; min-height: 100vh; font-family: 'DM Mono', monospace; color: #1a2940; padding: 32px 24px; }
+  .hmap-cell { transition: transform 0.15s ease, box-shadow 0.15s ease; cursor: pointer; border-radius: 8px; padding: 10px 4px 8px; text-align: center; }
+  .hmap-cell:hover { transform: scale(1.18); z-index: 10; position: relative; box-shadow: 0 6px 20px rgba(0,0,0,0.15); }
+  .tab-btn { background: #fff; border: 1.5px solid #d0dce8; color: #6a8aaa; padding: 7px 18px; border-radius: 6px; cursor: pointer; font-family: 'DM Mono', monospace; font-size: 12px; transition: all 0.2s; }
+  .tab-btn.active { background: #1a6fff; border-color: #1a6fff; color: #fff; box-shadow: 0 2px 10px #1a6fff44; }
+  .filter-btn { background: #fff; border: 1.5px solid #d0dce8; color: #6a8aaa; padding: 5px 14px; border-radius: 20px; cursor: pointer; font-family: 'DM Mono', monospace; font-size: 11px; transition: all 0.2s; }
+  .filter-btn.yr-active { background: #1a6fff; border-color: #1a6fff; color: #fff; box-shadow: 0 2px 8px rgba(0,0,0,0.15); }
+  .filter-btn.mo-active { background: #0097a7; border-color: #0097a7; color: #fff; box-shadow: 0 2px 8px rgba(0,0,0,0.15); }
+  .legend-grad { background: linear-gradient(90deg, #e8f0fe, #90caf9, #42a5f5, #1e88e5, #f9a825, #fb8c00, #e53935); height: 10px; border-radius: 3px; flex: 1; }
+  #grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(48px, 1fr)); gap: 5px; margin-bottom: 24px; }
+  #bars { display: flex; flex-direction: column; gap: 8px; }
+  .bar-row { display: flex; align-items: center; gap: 12px; }
+  .bar-label { width: 80px; font-size: 11px; color: #6a8aaa; text-align: right; flex-shrink: 0; }
+  .bar-track { flex: 1; background: #dde6f0; border-radius: 6px; height: 34px; overflow: hidden; position: relative; }
+  .bar-val { position: absolute; right: 10px; top: 50%; transform: translateY(-50%); font-size: 11px; color: #1a2940; font-weight: 500; }
+  .cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 12px; margin-top: 28px; }
+  .card { background: #fff; border: 1.5px solid #d0dce8; border-radius: 12px; padding: 16px 18px; box-shadow: 0 2px 8px rgba(0,0,0,0.05); }
+  .top5 { display: flex; flex-wrap: wrap; gap: 10px; }
+  .top5-item { background: #fff; border: 1.5px solid #d0dce8; border-radius: 10px; padding: 12px 18px; min-width: 150px; box-shadow: 0 2px 8px rgba(0,0,0,0.05); }
+  .stat-card { background: #fff; border: 1.5px solid #d0dce8; border-radius: 12px; padding: 20px; box-shadow: 0 2px 8px rgba(0,0,0,0.05); }
+  #tooltip { position: fixed; background: #fff; border: 1.5px solid #1a6fff44; border-radius: 10px; padding: 10px 14px; font-size: 12px; pointer-events: none; z-index: 100; box-shadow: 0 8px 28px rgba(0,0,0,0.12); display: none; }
+  .filter-section { background: #fff; border: 1.5px solid #d0dce8; border-radius: 10px; padding: 14px 18px; margin-bottom: 24px; }
+  .filter-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .filter-label { font-size: 10px; color: #90a8c0; letter-spacing: 2px; text-transform: uppercase; margin-right: 4px; min-width: 40px; }
+  #month-row { margin-top: 10px; }
+  #month-row.disabled { opacity: 0.4; pointer-events: none; }
+  #loading { position: fixed; inset: 0; background: #f0f4f8; display: flex; flex-direction: column; align-items: center; justify-content: center; z-index: 999; }
+  .spinner { width: 40px; height: 40px; border: 3px solid #d0dce8; border-top-color: #1a6fff; border-radius: 50%; animation: spin 0.8s linear infinite; margin-bottom: 16px; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  #error-msg { display: none; background: #fff0f0; border: 1.5px solid #ffb3b3; border-radius: 10px; padding: 16px 20px; color: #c0392b; font-size: 13px; margin-bottom: 24px; }
+  #last-updated { font-size: 10px; color: #90a8c0; margin-top: 6px; }
+</style>
+</head>
+<body>
+
+<div id="loading">
+  <div class="spinner"></div>
+  <div style="font-size:13px;color:#7a9ab5">Memuat data dari Google Sheets...</div>
+</div>
+
+<div id="app" style="display:none">
+
+  <div style="margin-bottom:28px">
+    <div style="font-size:11px;letter-spacing:4px;color:#90a8c0;text-transform:uppercase;margin-bottom:8px">BJB Loan</div>
+    <h1 style="font-family:'Syne',sans-serif;font-size:clamp(24px,4vw,40px);font-weight:800;color:#0d1f35;letter-spacing:-1px;line-height:1.1">
+      Disbursement Heatmap
+    </h1>
+    <p id="subtitle" style="font-size:12px;color:#7a9ab5;margin-top:6px"></p>
+    <p id="last-updated"></p>
+  </div>
+
+  <div id="error-msg"></div>
+
+  <div style="display:flex;gap:8px;margin-bottom:20px;flex-wrap:wrap;align-items:center">
+    <button class="tab-btn active" id="btn-grid" onclick="setView('grid')">▦ Grid View</button>
+    <button class="tab-btn" id="btn-bar" onclick="setView('bar')">≡ Bar View</button>
+    <button class="tab-btn" id="btn-rev" onclick="setView('rev')">₿ Revenue View</button>
+    <button class="tab-btn" onclick="loadData()" style="margin-left:auto;font-size:11px">↺ Refresh</button>
+  </div>
+
+  <div class="filter-section">
+    <!-- YEAR ROW -->
+    <div class="filter-row" id="year-row">
+      <span class="filter-label">Tahun</span>
+      <!-- populated dynamically -->
+    </div>
+    <!-- MONTH ROW -->
+    <div class="filter-row disabled" id="month-row">
+      <span class="filter-label">Bulan</span>
+      <!-- populated dynamically -->
+    </div>
+  </div>
+
+  <!-- GRID VIEW -->
+  <div id="view-grid">
+    <div style="font-size:11px;color:#90a8c0;margin-bottom:12px;letter-spacing:2px">INTENSITAS PER JUTA RUPIAH</div>
+    <div id="grid"></div>
+    <div style="display:flex;align-items:center;gap:12px;margin-top:8px">
+      <span style="font-size:10px;color:#90a8c0">Sedikit</span>
+      <div class="legend-grad"></div>
+      <span style="font-size:10px;color:#90a8c0">Banyak</span>
+    </div>
+    <div style="margin-top:32px">
+      <div style="font-size:11px;color:#90a8c0;margin-bottom:14px;letter-spacing:2px">🔥 TOP 5 NOMINAL TERBANYAK</div>
+      <div class="top5" id="top5"></div>
+    </div>
+  </div>
+
+  <!-- BAR VIEW -->
+  <div id="view-bar" style="display:none">
+    <div style="font-size:11px;color:#90a8c0;margin-bottom:16px;letter-spacing:2px">DISTRIBUSI PER KELOMPOK NOMINAL</div>
+    <div id="bars"></div>
+    <div class="cards" id="cards"></div>
+  </div>
+
+  <!-- REVENUE VIEW -->
+  <div id="view-rev" style="display:none">
+    <div style="font-size:11px;color:#90a8c0;margin-bottom:16px;letter-spacing:2px">ESTIMASI SERVICE FEE (1.4% s/d 25Jt · MAX Rp350.000)</div>
+    <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:12px;margin-bottom:32px">
+      <div class="stat-card">
+        <div style="font-size:11px;color:#90a8c0;margin-bottom:6px">TOTAL SERVICE FEE</div>
+        <div id="rev-total" style="font-size:26px;font-weight:700;color:#1a6fff;letter-spacing:-1px"></div>
+        <div style="font-size:10px;color:#90a8c0;margin-top:4px">periode dipilih</div>
+      </div>
+      <div class="stat-card">
+        <div style="font-size:11px;color:#90a8c0;margin-bottom:6px">AVG FEE PER TRANSAKSI</div>
+        <div id="rev-avg" style="font-size:26px;font-weight:700;color:#0097a7;letter-spacing:-1px"></div>
+      </div>
+      <div class="stat-card">
+        <div style="font-size:11px;color:#90a8c0;margin-bottom:6px">TOTAL TRANSAKSI</div>
+        <div id="rev-people" style="font-size:26px;font-weight:700;color:#388e3c;letter-spacing:-1px"></div>
+      </div>
+    </div>
+    <div style="font-size:11px;color:#90a8c0;margin-bottom:12px;letter-spacing:2px">SERVICE FEE PER KELOMPOK NOMINAL</div>
+    <div id="rev-bars"></div>
+  </div>
+
+</div>
+
+<div id="tooltip"></div>
+
+<script>
+const SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbz2anx4yDgfKhqTkbRtSW8h7UO_fjpqT_cCTYXBmxy2-J0yoRU-wN5dZEsZXQpYM-F7pQ/exec';
+
+const BINS = [
+  {label:"5–10 Jt", min:5000000,  max:10000000},
+  {label:"10–15 Jt",min:10000000, max:15000000},
+  {label:"15–20 Jt",min:15000000, max:20000000},
+  {label:"20–25 Jt",min:20000000, max:25000000},
+  {label:"25–30 Jt",min:25000000, max:30000000},
+  {label:"30–40 Jt",min:30000000, max:40000000},
+  {label:"40–50 Jt",min:40000000, max:50000000},
+  {label:"50–100 Jt",min:50000000,max:100000001},
+];
+const BAR_COLORS = ["#42a5f5","#1e88e5","#1565c0","#f9a825","#fb8c00","#e64a19","#e53935","#b71c1c"];
+const MONTH_NAMES = {1:"Jan",2:"Feb",3:"Mar",4:"Apr",5:"Mei",6:"Jun",7:"Jul",8:"Agt",9:"Sep",10:"Okt",11:"Nov",12:"Des"};
+
+let ALL_DATA = [];
+let activeYear = 'all';
+let activeMonth = 'all';
+
+function getFee(n){ return n <= 25000000 ? n * 0.014 : 350000; }
+function fmtJt(v){ return (v / 1000000).toFixed(1) + ' Jt'; }
+
+function getColor(intensity){
+  if(intensity === 0)   return {bg:"#eef4fb", text:"#b0c8e0", border:"#dce8f5"};
+  if(intensity < 0.05)  return {bg:"#dbeeff", text:"#5b9fd4", border:"#b8d8f5"};
+  if(intensity < 0.15)  return {bg:"#90caf9", text:"#0d47a1", border:"#64b5f6"};
+  if(intensity < 0.3)   return {bg:"#42a5f5", text:"#ffffff", border:"#1e88e5"};
+  if(intensity < 0.5)   return {bg:"#1e88e5", text:"#ffffff", border:"#1565c0"};
+  if(intensity < 0.7)   return {bg:"#f9a825", text:"#4a2800", border:"#f57f17"};
+  if(intensity < 0.85)  return {bg:"#fb8c00", text:"#ffffff", border:"#e65100"};
+  return {bg:"#e53935", text:"#ffffff", border:"#b71c1c"};
+}
+
+function buildFilterButtons(){
+  // YEAR buttons
+  const years = [...new Set(ALL_DATA.map(r => r[2]))].sort();
+  const yearRow = document.getElementById('year-row');
+  yearRow.innerHTML = '<span class="filter-label">Tahun</span>';
+
+  // "Semua" button
+  const allBtn = document.createElement('button');
+  allBtn.className = 'filter-btn yr-active';
+  allBtn.textContent = 'Semua';
+  allBtn.addEventListener('click', () => setYear('all'));
+  yearRow.appendChild(allBtn);
+
+  years.forEach(yr => {
+    const btn = document.createElement('button');
+    btn.className = 'filter-btn';
+    btn.textContent = yr;
+    btn.dataset.year = yr;
+    btn.addEventListener('click', () => setYear(yr));
+    yearRow.appendChild(btn);
+  });
+
+  // MONTH buttons
+  const monthRow = document.getElementById('month-row');
+  monthRow.innerHTML = '<span class="filter-label">Bulan</span>';
+
+  const allMoBtn = document.createElement('button');
+  allMoBtn.className = 'filter-btn mo-active';
+  allMoBtn.textContent = 'Semua';
+  allMoBtn.addEventListener('click', () => setMonth('all'));
+  monthRow.appendChild(allMoBtn);
+
+  Object.entries(MONTH_NAMES).forEach(([mo, label]) => {
+    const btn = document.createElement('button');
+    btn.className = 'filter-btn';
+    btn.textContent = label;
+    btn.dataset.month = mo;
+    btn.addEventListener('click', () => setMonth(mo));
+    monthRow.appendChild(btn);
+  });
+}
+
+function setYear(yr){
+  activeYear = yr;
+  activeMonth = 'all';
+
+  // Update year button styles
+  document.querySelectorAll('#year-row .filter-btn').forEach(b => {
+    const isAll = yr === 'all' && b.textContent === 'Semua';
+    const isMatch = b.dataset.year == yr;
+    b.className = 'filter-btn' + (isAll || isMatch ? ' yr-active' : '');
+  });
+
+  // Reset month buttons
+  document.querySelectorAll('#month-row .filter-btn').forEach(b => {
+    b.className = 'filter-btn' + (b.textContent === 'Semua' ? ' mo-active' : '');
+  });
+
+  // Enable/disable month row
+  const monthRow = document.getElementById('month-row');
+  if(yr === 'all'){
+    monthRow.classList.add('disabled');
+  } else {
+    monthRow.classList.remove('disabled');
+  }
+
+  render();
+}
+
+function setMonth(mo){
+  activeMonth = mo;
+
+  document.querySelectorAll('#month-row .filter-btn').forEach(b => {
+    const isAll = mo === 'all' && b.textContent === 'Semua';
+    const isMatch = b.dataset.month == mo;
+    b.className = 'filter-btn' + (isAll || isMatch ? ' mo-active' : '');
+  });
+
+  render();
+}
+
+function getFiltered(){
+  return ALL_DATA.filter(([,, yr, mo]) => {
+    if(activeYear !== 'all' && yr !== parseInt(activeYear)) return false;
+    if(activeMonth !== 'all' && mo !== parseInt(activeMonth)) return false;
+    return true;
+  });
+}
+
+function periodLabel(){
+  if(activeYear === 'all') return 'Semua Periode';
+  if(activeMonth === 'all') return `Tahun ${activeYear}`;
+  return `${MONTH_NAMES[parseInt(activeMonth)]} ${activeYear}`;
+}
+
+async function loadData(){
+  document.getElementById('loading').style.display = 'flex';
+  document.getElementById('app').style.display = 'none';
+  document.getElementById('error-msg').style.display = 'none';
+
+  try {
+    const res = await fetch(SCRIPT_URL);
+    if(!res.ok) throw new Error(`HTTP ${res.status}`);
+    const json = await res.json();
+    if(!Array.isArray(json)) throw new Error('Format data tidak valid');
+
+    ALL_DATA = json.filter(r => Array.isArray(r) && r.length === 4 && r[1] > 0);
+
+    activeYear = 'all';
+    activeMonth = 'all';
+
+    buildFilterButtons();
+
+    document.getElementById('last-updated').textContent =
+      'Data diperbarui: ' + new Date().toLocaleString('id-ID');
+
+    document.getElementById('loading').style.display = 'none';
+    document.getElementById('app').style.display = 'block';
+    render();
+
+  } catch(err){
+    document.getElementById('loading').style.display = 'none';
+    const errEl = document.getElementById('error-msg');
+    errEl.style.display = 'block';
+    errEl.textContent = `Gagal memuat data: ${err.message}. Pastikan Apps Script sudah di-deploy dan URL benar.`;
+    document.getElementById('app').style.display = 'block';
+  }
+}
+
+function render(){
+  const data = getFiltered();
+  const totalDisbursed     = data.reduce((s,[nom,c])=>s+(nom)*c, 0);
+  const totalTrx = data.reduce((s,[,c]) => s+c, 0);
+  const totalRev = data.reduce((s,[n,c]) => s+getFee(n)*c, 0);
+
+  document.getElementById('subtitle').textContent =
+    `${totalDisbursed.toLocaleString('id-ID')} penyaluran · ${totalTrx.toLocaleString('id-ID')} transaksi · ${periodLabel()}`;
+
+  // GRID
+  const gridMap = {};
+  data.forEach(([s,c]) => { const b = Math.floor(s/1000000); gridMap[b] = (gridMap[b]||0) + c; });
+  const allBuckets = ALL_DATA.map(r => Math.floor(r[0]/1000000));
+  const minB = Math.min(...allBuckets);
+  const maxB = Math.max(...allBuckets);
+  const maxGrid = Math.max(1, ...Object.values(gridMap));
+  const gridEl = document.getElementById('grid');
+  gridEl.innerHTML = '';
+  for(let b = minB; b <= maxB; b++){
+    const count = gridMap[b] || 0;
+    const intensity = count / maxGrid;
+    const {bg, text, border} = getColor(intensity);
+    const div = document.createElement('div');
+    div.className = 'hmap-cell';
+    div.style.cssText = `background:${bg};border:1.5px solid ${border};`;
+    div.innerHTML = `<div style="font-size:14px;font-weight:600;color:${text};line-height:1">${count > 0 ? (count >= 1000 ? `${(count/1000).toFixed(1)}k` : count) : '·'}</div><div style="font-size:9px;color:${text}cc;margin-top:4px">${b}Jt</div>`;
+    div.addEventListener('mouseenter', e => {
+      const fee = getFee(b*1000000);
+      const tt = document.getElementById('tooltip');
+      tt.style.display = 'block';
+      tt.style.left = (e.clientX+14)+'px';
+      tt.style.top  = (e.clientY-70)+'px';
+      tt.innerHTML = `<div style="color:#1a6fff;font-weight:600">Rp ${(b*1000000).toLocaleString('id-ID')}</div><div style="color:#1a2940;margin-top:3px"><span style="color:#e53935;font-weight:700">${count.toLocaleString('id-ID')}</span> transaksi</div><div style="color:#0097a7;margin-top:2px">Fee/trx: Rp ${Math.round(fee).toLocaleString('id-ID')}</div><div style="color:#388e3c;margin-top:1px">Total fee: ${fmtJt(fee*count)}</div><div style="color:#90a8c0;margin-top:2px">${totalTrx > 0 ? ((count/totalTrx)*100).toFixed(1) : 0}% dari total</div>`;
+    });
+    div.addEventListener('mousemove', e => {
+      const tt = document.getElementById('tooltip');
+      tt.style.left = (e.clientX+14)+'px';
+      tt.style.top  = (e.clientY-70)+'px';
+    });
+    div.addEventListener('mouseleave', () => { document.getElementById('tooltip').style.display = 'none'; });
+    gridEl.appendChild(div);
+  }
+
+  // TOP 5
+  const nomMap = {};
+  data.forEach(([n,c]) => { nomMap[n] = (nomMap[n]||0) + c; });
+  const top5El = document.getElementById('top5');
+  top5El.innerHTML = '';
+  Object.entries(nomMap).sort((a,b) => b[1]-a[1]).slice(0,5).forEach(([nom, count]) => {
+    const nominal = parseInt(nom);
+    const div = document.createElement('div'); div.className = 'top5-item';
+    div.innerHTML = `<div style="font-size:20px;font-weight:700;color:#e53935">${count.toLocaleString('id-ID')}</div><div style="font-size:11px;color:#7a9ab5;margin-top:2px">Rp ${nominal.toLocaleString('id-ID')}</div><div style="font-size:10px;color:#0097a7;margin-top:3px">Fee: Rp ${Math.round(getFee(nominal)).toLocaleString('id-ID')}/trx</div><div style="font-size:10px;color:#90a8c0;margin-top:1px">${totalTrx > 0 ? ((count/totalTrx)*100).toFixed(1) : 0}% dari total</div>`;
+    top5El.appendChild(div);
+  });
+
+  // BAR
+  const binData = BINS.map(bin => {
+    const items = data.filter(([s]) => s >= bin.min && s < bin.max);
+    const total   = items.reduce((s,[,c]) => s+c, 0);
+    const revenue = items.reduce((s,[n,c]) => s+getFee(n)*c, 0);
+    return {...bin, total, revenue};
+  });
+  const maxBin = Math.max(1, ...binData.map(d => d.total));
+  const barsEl = document.getElementById('bars');
+  barsEl.innerHTML = '';
+  binData.forEach((bin,i) => {
+    const w = (bin.total/maxBin)*100;
+    const row = document.createElement('div'); row.className = 'bar-row';
+    row.innerHTML = `<div class="bar-label">${bin.label}</div><div class="bar-track"><div style="width:${w}%;height:100%;background:${BAR_COLORS[i]};border-radius:6px;transition:width 0.5s"></div><div class="bar-val">${bin.total.toLocaleString('id-ID')}</div></div>`;
+    barsEl.appendChild(row);
+  });
+  const cardsEl = document.getElementById('cards');
+  cardsEl.innerHTML = '';
+  binData.filter(b => b.total > 0).forEach((bin,i) => {
+    const pct = totalTrx > 0 ? ((bin.total/totalTrx)*100).toFixed(1) : '0';
+    const div = document.createElement('div'); div.className = 'card';
+    div.innerHTML = `<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px"><div style="width:10px;height:10px;border-radius:3px;background:${BAR_COLORS[i]}"></div><div style="font-size:13px;font-weight:500;color:#1a2940">${bin.label}</div></div><div style="font-size:24px;font-weight:700;color:#0d1f35;letter-spacing:-1px">${bin.total.toLocaleString('id-ID')}</div><div style="font-size:10px;color:#90a8c0;margin-top:4px">${pct}% dari total</div><div style="font-size:10px;color:#0097a7;margin-top:4px">Fee: Rp ${fmtJt(bin.revenue)}</div>`;
+    cardsEl.appendChild(div);
+  });
+
+  // REVENUE
+  document.getElementById('rev-total').textContent = 'Rp ' + fmtJt(totalRev);
+  document.getElementById('rev-avg').textContent   = 'Rp ' + (totalTrx > 0 ? Math.round(totalRev/totalTrx).toLocaleString('id-ID') : 0);
+  document.getElementById('rev-people').textContent = totalTrx.toLocaleString('id-ID') + ' trx';
+  const maxRev = Math.max(1, ...binData.map(d => d.revenue));
+  const revBarsEl = document.getElementById('rev-bars');
+  revBarsEl.innerHTML = '';
+  binData.forEach((bin,i) => {
+    const w = (bin.revenue/maxRev)*100;
+    const row = document.createElement('div'); row.className = 'bar-row'; row.style.marginBottom = '8px';
+    row.innerHTML = `<div class="bar-label">${bin.label}</div><div class="bar-track"><div style="width:${w}%;height:100%;background:${BAR_COLORS[i]};border-radius:6px;transition:width 0.5s"></div><div class="bar-val">Rp ${fmtJt(bin.revenue)}</div></div>`;
+    revBarsEl.appendChild(row);
+  });
+}
+
+function setView(v){
+  ['grid','bar','rev'].forEach(x => {
+    document.getElementById('view-'+x).style.display = v === x ? 'block' : 'none';
+    document.getElementById('btn-'+x).classList.toggle('active', v === x);
+  });
+}
+
+loadData();
+</script>
+</body>
+</html>
